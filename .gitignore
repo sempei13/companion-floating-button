@@ -221,3 +221,7 @@ __marimo__/
 
 # Per-machine settings (target button, window position)
 settings.json
+
+# Build output
+installer/
+dmgstage/

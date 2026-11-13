@@ -1,0 +1,106 @@
+name: Build installers
+
+# Every push to main builds all three installers (downloadable from the run's "Artifacts").
+# Pushing a tag like v1.0.0 also publishes them on a GitHub Release.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  APP_NAME: Companion Floating Button
+  PYTHON_VERSION: "3.12"
+  PYINSTALLER_VERSION: "6.22.3"
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel
+            target: mac-intel
+          - os: macos-15
+            target: mac-apple-silicon
+          - os: windows-2025
+            target: windows
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+
+      - name: Work out version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "APP_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            echo "APP_VERSION=0.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          fi
+
+      # uv's standalone Python ships Tk 9, which is what the app was tested with.
+      - name: Set up Python and PyInstaller
+        shell: bash
+        run: |
+          uv venv --python "$PYTHON_VERSION" .venv
+          uv pip install --python .venv "pyinstaller==$PYINSTALLER_VERSION"
+
+      - name: Build app (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          .venv/bin/pyinstaller --noconfirm --windowed --name "$APP_NAME" \
+            --icon packaging/icon.icns \
+            --osx-bundle-identifier com.trinitydigitalmedia.companionfloatingbutton \
+            floating_button.py
+          APP="dist/$APP_NAME.app"
+          plutil -replace CFBundleShortVersionString -string "$APP_VERSION" "$APP/Contents/Info.plist"
+          plutil -replace CFBundleVersion -string "$APP_VERSION" "$APP/Contents/Info.plist"
+          # Ad-hoc signature (required to run on Apple Silicon). Not notarized.
+          codesign --force --deep --sign - "$APP"
+          mkdir -p dmgstage installer
+          cp -R "$APP" dmgstage/
+          ln -s /Applications dmgstage/Applications
+          hdiutil create -volname "$APP_NAME" -srcfolder dmgstage -ov -format UDZO \
+            "installer/Companion-Floating-Button-${{ matrix.target }}.dmg"
+
+      - name: Build app (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          .venv/Scripts/pyinstaller --noconfirm --windowed --name "$APP_NAME" \
+            --icon packaging/icon.ico floating_button.py
+
+      - name: Build installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y }
+          & $iscc "/DAppVersion=$env:APP_VERSION" packaging\windows-installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}
+          path: installer/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: installers
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: installers/*
+          generate_release_notes: true

@@ -5,7 +5,22 @@ import base64, ctypes, ctypes.util, json, os, queue, re, socket, sys, threading,
 # menu (Settings...) and saved to settings.json next to this script, along with
 # where the button was last dragged to.
 DEFAULTS = {"host": "127.0.0.1", "page": 9, "row": 0, "col": 1, "x": 60, "y": 60, "only_over_propresenter": True}
-SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+APP_NAME = "Companion Floating Button"
+
+
+def settings_dir():
+    # Installed apps can't write inside their own folder, so use the per-user app-data spot.
+    if sys.platform == "darwin":
+        base = os.path.expanduser("~/Library/Application Support")
+    elif sys.platform == "win32":
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(base, APP_NAME)
+
+
+SETTINGS_FILE = os.path.join(settings_dir(), "settings.json")
+LEGACY_SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
 HTTP_PORT = 8000          # Companion web/HTTP API (used for presses when the Satellite link is down)
 SATELLITE_PORT = 16622    # Companion Satellite TCP API (live text/colour + presses)
 FALLBACK_LABEL = "CLEAR"
@@ -22,8 +37,9 @@ MAX_FONT, MIN_FONT = 15, 8
 
 def load_settings():
     cfg = dict(DEFAULTS)
+    path = SETTINGS_FILE if os.path.exists(SETTINGS_FILE) else LEGACY_SETTINGS_FILE
     try:
-        with open(SETTINGS_FILE) as f:
+        with open(path) as f:
             saved = json.load(f)
         for k in DEFAULTS:
             if k in saved and type(saved[k]) is type(DEFAULTS[k]):
@@ -34,6 +50,7 @@ def load_settings():
 
 
 def save_settings():
+    os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
     with open(SETTINGS_FILE, "w") as f:
         json.dump(cfg, f, indent=2)
 
@@ -119,9 +136,89 @@ def target_app_on_top(winlist, x, y, w, h):
     return False
 
 
+class WinWindowList:
+    """Windows equivalent: top-level windows front to back via user32 (no extra installs).
+
+    Returns the same tuples as WindowList; owner is the program name without ".exe",
+    layer is 0 for normal windows and 1 for always-on-top ones (taskbar, overlays).
+    """
+
+    def __init__(self):
+        from ctypes import wintypes
+        self.wt = wintypes
+        self.user32 = ctypes.WinDLL("user32", use_last_error=True)
+        self.kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.dwmapi = ctypes.WinDLL("dwmapi")
+        self.EnumProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        u, k = self.user32, self.kernel32
+        u.EnumWindows.argtypes = [self.EnumProc, wintypes.LPARAM]
+        u.IsWindowVisible.argtypes = [wintypes.HWND]
+        u.IsIconic.argtypes = [wintypes.HWND]
+        u.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        u.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        u.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+        u.GetWindowLongW.restype = ctypes.c_long
+        k.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        k.OpenProcess.restype = wintypes.HANDLE
+        k.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+                                                 ctypes.POINTER(wintypes.DWORD)]
+        k.CloseHandle.argtypes = [wintypes.HANDLE]
+        self.dwmapi.DwmGetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p,
+                                                      wintypes.DWORD]
+        self.names = {}
+
+    def _exe(self, pid):
+        if pid in self.names:
+            return self.names[pid]
+        name = ""
+        h = self.kernel32.OpenProcess(0x1000, False, pid)   # PROCESS_QUERY_LIMITED_INFORMATION
+        if h:
+            buf = ctypes.create_unicode_buffer(1024)
+            size = self.wt.DWORD(1024)
+            if self.kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                name = os.path.basename(buf.value)
+                if name.lower().endswith(".exe"):
+                    name = name[:-4]
+            self.kernel32.CloseHandle(h)
+        if len(self.names) > 500:
+            self.names.clear()
+        self.names[pid] = name
+        return name
+
+    def windows(self):
+        wt, u = self.wt, self.user32
+        out = []
+
+        def cb(hwnd, _):
+            if not u.IsWindowVisible(hwnd) or u.IsIconic(hwnd):
+                return True
+            cloaked = wt.DWORD(0)   # hidden UWP apps / other virtual desktops
+            if self.dwmapi.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), 4) == 0 and cloaked.value:
+                return True
+            ex = u.GetWindowLongW(hwnd, -20)    # GWL_EXSTYLE
+            if ex & 0x80:                       # WS_EX_TOOLWINDOW (tooltips, palettes)
+                return True
+            r = wt.RECT()
+            if not u.GetWindowRect(hwnd, ctypes.byref(r)) or r.right <= r.left or r.bottom <= r.top:
+                return True
+            pid = wt.DWORD(0)
+            u.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            layer = 1 if ex & 0x8 else 0        # WS_EX_TOPMOST
+            out.append((self._exe(pid.value), pid.value, layer, r.left, r.top, r.right - r.left, r.bottom - r.top))
+            return True
+
+        u.EnumWindows(self.EnumProc(cb), 0)    # EnumWindows walks top-level windows in z-order
+        return out
+
+
 try:
-    winlist = WindowList() if sys.platform == "darwin" else None
-except OSError:
+    if sys.platform == "darwin":
+        winlist = WindowList()
+    elif sys.platform == "win32":
+        winlist = WinWindowList()
+    else:
+        winlist = None
+except (OSError, AttributeError):
     winlist = None
 
 
