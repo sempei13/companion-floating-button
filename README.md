@@ -7,7 +7,7 @@ Made by Trinity Digital Media, LLC (ChurchTechU). Not affiliated with Bitfocus o
 ## Download
 
 Get the latest version from the Releases page:
-
+https://github.com/sempei13/companion-floating-button/releases
 | Computer | File |
 |---|---|
 | Mac with Apple Silicon (M1, M2, M3, M4...) | `Companion-Floating-Button-mac-apple-silicon.dmg` |
