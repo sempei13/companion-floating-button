@@ -33,7 +33,7 @@ In Companion's web page, go to **Settings > Protocols** and turn on **Enable But
 
 Heads up: with that setting on, any Satellite client that can reach your Companion computer can press any button, bypassing the PIN/page lock. On a network where guests or volunteers share the Wi-Fi, keep that in mind.
 
-Without the setting, the button still presses your Companion button but just says "CLEAR", and its bottom bar stays grey. Orange means it's linked.
+Without the setting, the button still presses your Companion button but just says "CLEAR" on a flat grey face. Once it's linked, it takes on your Companion button's colour, toned down to match ProPresenter's dark style.
 
 ## Use it
 

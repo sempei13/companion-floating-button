@@ -28,11 +28,14 @@ SUB_ID = "floating-button"
 
 # ---- look ----
 BG_TRANSPARENT = "#010101"
-DEFAULT_FACE = "#2b2b2e"
+# Styled after ProPresenter's old "Clear To Logo" button: flat, dark, barely rounded,
+# dim regular-weight text. Companion's colours are shown muted so they sit in that style.
+DEFAULT_FACE = "#3a3a3c"  # not linked to Companion: flat grey
 DEFAULT_TEXT = "#ffffff"
-ACCENT = "#e8a33a"
-W, H, R = 150, 64, 12
-MAX_FONT, MIN_FONT = 15, 8
+FACE_BASE, FACE_MIX = "#262626", 0.80  # Companion colour mixed 80% into dark grey (#ff0000 -> #511e1e)
+TEXT_DIM = 0.45           # text colour blended this far toward the face (white -> #ae9898 on maroon)
+W, H, R = 130, 32, 3
+MAX_FONT, MIN_FONT = 12, 9
 
 
 def load_settings():
@@ -352,6 +355,16 @@ def shade(hex_color, factor):
     return f"#{f(r):02x}{f(g):02x}{f(b):02x}"
 
 
+def blend(hex_a, hex_b, t):
+    """Mix hex_a toward hex_b by t (0 = all a, 1 = all b)."""
+    try:
+        a = [int(hex_a[i:i + 2], 16) for i in (1, 3, 5)]
+        b = [int(hex_b[i:i + 2], 16) for i in (1, 3, 5)]
+    except (ValueError, TypeError):
+        return hex_a
+    return "#" + "".join(f"{round(x + (y - x) * t):02x}" for x, y in zip(a, b))
+
+
 # ---------------------------------------------------------------- window
 root = tk.Tk()
 root.withdraw()                  # hide until borderless, or macOS adds a title bar
@@ -376,11 +389,10 @@ def rrect(x1, y1, x2, y2, r, **kw):
     return c.create_polygon(pts, smooth=True, **kw)
 
 
-body = rrect(2, 2, W-2, H-2, R, fill=DEFAULT_FACE, outline="#000000", width=2)
-bar = c.create_rectangle(14, H-12, W-14, H-8, fill=ACCENT, width=0)
-font = tkfont.Font(family="Helvetica", size=MAX_FONT, weight="bold")
-label = c.create_text(W/2, H/2-4, text=FALLBACK_LABEL, fill=DEFAULT_TEXT, font=font,
-                      justify="center", width=W-16)
+body = rrect(0, 0, W, H, R, fill=DEFAULT_FACE, outline="")
+font = tkfont.Font(family="Helvetica", size=MAX_FONT, weight="normal")
+label = c.create_text(W/2, H/2, text=FALLBACK_LABEL, fill=blend(DEFAULT_TEXT, DEFAULT_FACE, TEXT_DIM),
+                      font=font, justify="center", width=W-12)
 
 ui = queue.Queue()   # background threads hand UI updates to the Tk thread here
 # (Tk 9: root.after() called from a background thread silently never runs.)
@@ -395,16 +407,17 @@ def pump():
     root.after(50, pump)
 
 
-look = {"face": DEFAULT_FACE, "hover": False, "down": False, "pushed": False}
+look = {"face": DEFAULT_FACE, "text": DEFAULT_TEXT, "hover": False, "down": False, "pushed": False}
 
 
 def repaint():
     face = look["face"]
     if look["down"] or look["pushed"]:
-        face = shade(face, -0.35)
+        face = shade(face, -0.30)
     elif look["hover"]:
-        face = shade(face, 0.15)
+        face = shade(face, 0.10)
     c.itemconfig(body, fill=face)
+    c.itemconfig(label, fill=blend(look["text"], face, TEXT_DIM))
 
 
 def set_text(text):
@@ -414,15 +427,15 @@ def set_text(text):
     for size in range(MAX_FONT, MIN_FONT - 1, -1):
         font.configure(size=size)
         x1, y1, x2, y2 = c.bbox(label)
-        if (y2 - y1) <= H - 20 and (x2 - x1) <= W - 12:
+        if (y2 - y1) <= H - 2 and (x2 - x1) <= W - 10:
             break
 
 
 def on_state(text, color, textcolor, pushed):
     def apply():
-        look["face"] = color or DEFAULT_FACE
+        look["face"] = blend(color, FACE_BASE, FACE_MIX) if color else DEFAULT_FACE
+        look["text"] = textcolor or DEFAULT_TEXT
         look["pushed"] = pushed
-        c.itemconfig(label, fill=textcolor or DEFAULT_TEXT)
         set_text(text)
         repaint()
     ui.put(apply)
@@ -430,10 +443,9 @@ def on_state(text, color, textcolor, pushed):
 
 def on_status(connected):
     def apply():
-        c.itemconfig(bar, fill=ACCENT if connected else "#666666")
+        # Grey face = not linked; Companion's (muted) colour = linked.
         if not connected:
-            look["face"], look["pushed"] = DEFAULT_FACE, False
-            c.itemconfig(label, fill=DEFAULT_TEXT)
+            look.update(face=DEFAULT_FACE, text=DEFAULT_TEXT, pushed=False)
             set_text(FALLBACK_LABEL)
             repaint()
     ui.put(apply)
