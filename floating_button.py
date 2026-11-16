@@ -4,7 +4,8 @@ import base64, ctypes, ctypes.util, json, os, queue, re, socket, sys, threading,
 # Page/row/column and Companion address are edited from the button's right-click
 # menu (Settings...) and saved to settings.json next to this script, along with
 # where the button was last dragged to.
-DEFAULTS = {"host": "127.0.0.1", "page": 9, "row": 0, "col": 1, "x": 60, "y": 60, "only_over_propresenter": True}
+DEFAULTS = {"host": "127.0.0.1", "page": 9, "row": 0, "col": 1, "x": 60, "y": 60, "only_over_propresenter": True,
+            "launches": 0, "only_over_user_set": False}
 APP_NAME = "Companion Floating Button"
 
 
@@ -47,6 +48,8 @@ def load_settings():
         for k in DEFAULTS:
             if k in saved and type(saved[k]) is type(DEFAULTS[k]):
                 cfg[k] = saved[k]
+        if "launches" not in saved:
+            cfg["launches"] = 2      # settings from before launch counting: already past the first runs
     except (OSError, ValueError):
         pass
     return cfg
@@ -59,6 +62,16 @@ def save_settings():
 
 
 cfg = load_settings()
+
+# First launch: show the button everywhere so a new user can find it. Second launch:
+# switch on "Only show over ProPresenter". Either way, a choice the user made wins.
+cfg["launches"] = min(cfg["launches"] + 1, 1000)
+if not cfg["only_over_user_set"] and cfg["launches"] <= 2:
+    cfg["only_over_propresenter"] = cfg["launches"] == 2
+try:
+    save_settings()
+except OSError as _ex:
+    print("Couldn't save settings:", _ex)
 
 
 # ---------------------------------------------------------------- what's on screen (macOS)
@@ -228,6 +241,140 @@ try:
         winlist = None
 except (OSError, AttributeError):
     winlist = None
+
+
+# ---------------------------------------------------------------- displays
+class _NSRect(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_double), ("y", ctypes.c_double), ("w", ctypes.c_double), ("h", ctypes.c_double)]
+
+
+class ObjC:
+    """Just enough of the Objective-C runtime (via ctypes) for screen names and the Dock menu."""
+
+    def __init__(self):
+        self.lib = lib = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
+        ctypes.cdll.LoadLibrary(ctypes.util.find_library("AppKit"))   # makes NSScreen/NSMenu available
+        vp = ctypes.c_void_p
+        lib.objc_getClass.restype = vp
+        lib.objc_getClass.argtypes = [ctypes.c_char_p]
+        lib.sel_registerName.restype = vp
+        lib.sel_registerName.argtypes = [ctypes.c_char_p]
+        lib.class_addMethod.restype = ctypes.c_bool
+        lib.class_addMethod.argtypes = [vp, vp, vp, ctypes.c_char_p]
+        self.addr = ctypes.cast(lib.objc_msgSend, vp).value
+        self.protos = {}
+
+    def cls(self, name):
+        return self.lib.objc_getClass(name.encode())
+
+    def sel(self, name):
+        return self.lib.sel_registerName(name.encode())
+
+    def send(self, obj, sel, *args, restype=ctypes.c_void_p, argtypes=()):
+        # arm64 objc_msgSend must be called through a prototype matching the method exactly.
+        key = (restype, tuple(argtypes))
+        if key not in self.protos:
+            self.protos[key] = ctypes.CFUNCTYPE(restype, ctypes.c_void_p, ctypes.c_void_p, *argtypes)(self.addr)
+        return self.protos[key](obj, self.sel(sel), *args)
+
+    def nsstring(self, text):
+        return self.send(self.cls("NSString"), "stringWithUTF8String:", text.encode(), argtypes=[ctypes.c_char_p])
+
+    def pystring(self, ns):
+        if not ns:
+            return ""
+        raw = self.send(ns, "UTF8String", restype=ctypes.c_char_p)
+        return raw.decode(errors="replace") if raw else ""
+
+
+try:
+    objc = ObjC() if sys.platform == "darwin" else None
+except (OSError, AttributeError):
+    objc = None
+
+
+def _mac_displays():
+    screens = objc.send(objc.cls("NSScreen"), "screens")
+    out = []
+    main_h = None
+    for i in range(objc.send(screens, "count", restype=ctypes.c_ulong)):
+        sc = objc.send(screens, "objectAtIndex:", i, argtypes=[ctypes.c_ulong])
+        f = objc.send(sc, "frame", restype=_NSRect)
+        if main_h is None:
+            main_h = f.h                  # screens[0] holds the menu bar; Tk's 0,0 is its top-left
+        name = objc.pystring(objc.send(sc, "localizedName")) or f"Display {i + 1}"
+        out.append((name, int(f.x), int(main_h - (f.y + f.h)), int(f.w), int(f.h)))
+    return out
+
+
+def _win_displays():
+    from ctypes import wintypes
+
+    class MONITORINFOEXW(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT),
+                    ("dwFlags", wintypes.DWORD), ("szDevice", wintypes.WCHAR * 32)]
+
+    user32 = ctypes.WinDLL("user32")
+    proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HMONITOR, wintypes.HDC, ctypes.POINTER(wintypes.RECT),
+                              wintypes.LPARAM)
+    user32.EnumDisplayMonitors.argtypes = [wintypes.HDC, ctypes.POINTER(wintypes.RECT), proc, wintypes.LPARAM]
+    user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MONITORINFOEXW)]
+    found = []
+
+    def cb(hmon, _hdc, _rect, _data):
+        mi = MONITORINFOEXW()
+        mi.cbSize = ctypes.sizeof(MONITORINFOEXW)
+        if user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+            r = mi.rcWork
+            found.append((bool(mi.dwFlags & 1), r.left, r.top, r.right - r.left, r.bottom - r.top))
+        return True
+
+    user32.EnumDisplayMonitors(None, None, proc(cb), 0)
+    found.sort(key=lambda d: (not d[0], d[1], d[2]))   # primary first, then left to right
+    return [((f"Display {i + 1}" + (" (main)" if d[0] else "")),) + d[1:] for i, d in enumerate(found)]
+
+
+def displays():
+    """[(name, x, y, w, h)] for each connected display, in the button's screen coordinates."""
+    try:
+        if objc is not None:
+            ds = _mac_displays()
+        elif sys.platform == "win32":
+            ds = _win_displays()
+        else:
+            ds = []
+    except Exception as ex:   # never let a display query break the menus
+        print("Display list failed:", ex)
+        ds = []
+    if not ds:
+        ds = [("Display 1", 0, 0, root.winfo_screenwidth(), root.winfo_screenheight())]
+    seen = {}
+    named = []
+    for name, x, y, w, h in ds:   # two identical monitors get "(2)" so they can be told apart
+        seen[name] = seen.get(name, 0) + 1
+        named.append((name if seen[name] == 1 else f"{name} ({seen[name]})", x, y, w, h))
+    return named
+
+
+def move_to_display(index):
+    ds = displays()
+    if not 0 <= index < len(ds):
+        return
+    cx, cy = cfg["x"] + W / 2, cfg["y"] + H / 2
+    cur = next((d for d in ds if d[1] <= cx < d[1] + d[3] and d[2] <= cy < d[2] + d[4]), ds[0])
+    _, nx, ny, nw, nh = ds[index]
+    # Keep the same relative spot (e.g. near the right edge stays near the right edge).
+    fx = (cfg["x"] - cur[1]) / max(cur[3] - W, 1)
+    fy = (cfg["y"] - cur[2]) / max(cur[4] - H, 1)
+    fx, fy = min(max(fx, 0.0), 1.0), min(max(fy, 0.0), 1.0)
+    move_to(nx + round(fx * (nw - W)), ny + round(fy * (nh - H)))
+
+
+def fill_display_menu(m):
+    """(Re)build a Tk menu with one "Move to <display>" item per display."""
+    m.delete(0, "end")
+    for i, d in enumerate(displays()):
+        m.add_command(label=f"Move to {d[0]}", command=lambda i=i: move_to_display(i))
 
 
 # ---------------------------------------------------------------- Satellite link
@@ -549,6 +696,7 @@ only_over_var = tk.BooleanVar(value=cfg["only_over_propresenter"])
 
 def toggle_only_over():
     cfg["only_over_propresenter"] = only_over_var.get()
+    cfg["only_over_user_set"] = True
     try:
         save_settings()
     except OSError as ex:
@@ -556,9 +704,101 @@ def toggle_only_over():
 
 
 menu.add_checkbutton(label="Only show over ProPresenter", variable=only_over_var, command=toggle_only_over)
+display_menu = tk.Menu(menu, tearoff=0)
+display_menu.configure(postcommand=lambda: fill_display_menu(display_menu))
+fill_display_menu(display_menu)
+menu.add_cascade(label="Move to Display", menu=display_menu)
 menu.add_command(label="Move to top-left", command=lambda: move_to(DEFAULTS["x"], DEFAULTS["y"]))
 menu.add_separator()
 menu.add_command(label="Quit", command=root.destroy)
+
+
+# ---------------------------------------------------------------- macOS menu bar + Dock menu
+def fill_window_menu(m):
+    fill_display_menu(m)
+    m.add_command(label="Move to top-left", command=lambda: move_to(DEFAULTS["x"], DEFAULTS["y"]))
+    m.add_separator()     # macOS appends its own window items below
+
+
+if sys.platform == "darwin":
+    menubar = tk.Menu(root, name="menubar")
+    window_menu = tk.Menu(menubar, name="window", tearoff=0)   # ".menubar.window" = the app's Window menu
+    window_menu.configure(postcommand=lambda: fill_window_menu(window_menu))
+    fill_window_menu(window_menu)
+    menubar.add_cascade(label="Window", menu=window_menu)
+    root.configure(menu=menubar)
+
+
+class DockMenu:
+    """Right-click menu on the Dock icon. Tk has no Dock menu, so this adds
+    applicationDockMenu: to Tk's application delegate through the Objective-C runtime."""
+
+    TOP_LEFT = 1000
+
+    def __init__(self):
+        vp = ctypes.c_void_p
+        self.app = objc.send(objc.cls("NSApplication"), "sharedApplication")
+        delegate = objc.send(self.app, "delegate")
+        if not delegate:
+            raise RuntimeError("no application delegate")
+        self.menu = objc.send(objc.send(objc.cls("NSMenu"), "alloc"), "initWithTitle:", objc.nsstring(""),
+                              argtypes=[vp])
+        # Keep the callbacks alive for the life of the app.
+        self.dock_imp = ctypes.CFUNCTYPE(vp, vp, vp, vp)(self._dock_menu)
+        self.action_imp = ctypes.CFUNCTYPE(None, vp, vp, vp)(self._action)
+        cls = objc.cls("TKApplication") or objc.cls("NSApplication")
+        objc.lib.class_addMethod(cls, objc.sel("cfbDockAction:"), ctypes.cast(self.action_imp, vp), b"v@:@")
+        dcls = self._class_of(delegate)
+        objc.lib.class_addMethod(dcls, objc.sel("applicationDockMenu:"), ctypes.cast(self.dock_imp, vp), b"@@:@")
+        # NSApplication caches which delegate methods exist; setting the delegate again refreshes that.
+        objc.send(self.app, "setDelegate:", None, argtypes=[vp])
+        objc.send(self.app, "setDelegate:", delegate, argtypes=[vp])
+
+    @staticmethod
+    def _class_of(obj):
+        f = objc.lib.object_getClass
+        f.restype, f.argtypes = ctypes.c_void_p, [ctypes.c_void_p]
+        return f(obj)
+
+    def _item(self, title, tag):
+        vp = ctypes.c_void_p
+        item = objc.send(objc.send(objc.cls("NSMenuItem"), "alloc"), "initWithTitle:action:keyEquivalent:",
+                         objc.nsstring(title), objc.sel("cfbDockAction:"), objc.nsstring(""),
+                         argtypes=[vp, vp, vp])
+        objc.send(item, "setTarget:", self.app, argtypes=[vp])
+        objc.send(item, "setTag:", tag, argtypes=[ctypes.c_long])
+        objc.send(self.menu, "addItem:", item, argtypes=[vp])
+        objc.send(item, "release")
+
+    def _dock_menu(self, _self, _cmd, _sender):
+        try:
+            objc.send(self.menu, "removeAllItems")
+            for i, d in enumerate(displays()):
+                self._item(f"Move to {d[0]}", i)
+            self._item("Move to top-left", self.TOP_LEFT)
+        except Exception as ex:
+            print("Dock menu failed:", ex)
+        return self.menu
+
+    def _action(self, _self, _cmd, sender):
+        tag = objc.send(sender, "tag", restype=ctypes.c_long)
+        if tag == self.TOP_LEFT:
+            ui.put(lambda: move_to(DEFAULTS["x"], DEFAULTS["y"]))
+        else:
+            ui.put(lambda: move_to_display(tag))
+
+
+dock_menu = None
+
+
+def install_dock_menu():
+    global dock_menu
+    if objc is None:
+        return
+    try:
+        dock_menu = DockMenu()
+    except Exception as ex:
+        print("Dock menu unavailable:", ex)
 
 
 def show_menu(e):
@@ -609,9 +849,14 @@ def remember_position():
 
 
 def move_to(x, y):
+    # Save the target directly: while hidden (not over ProPresenter) winfo_x/y can be stale.
     root.geometry(f"+{x}+{y}")
     root.update_idletasks()
-    remember_position()
+    cfg.update(x=int(x), y=int(y))
+    try:
+        save_settings()
+    except OSError as ex:
+        print("Couldn't save position:", ex)
 
 
 def hover(on):
@@ -658,4 +903,5 @@ on_status(False)
 root.after(50, root.deiconify)
 root.after(50, pump)
 root.after(500, keep_on_top)
+root.after(200, install_dock_menu)
 root.mainloop()

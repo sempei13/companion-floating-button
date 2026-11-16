@@ -41,11 +41,13 @@ Without the setting, the button still presses your Companion button but just say
 - **Drag** to move it. It remembers where you leave it.
 - **Right-click** (or Control-click on a Mac) for the menu:
   - **Settings...**: choose the Companion computer's address and which button (page, row, column). Row and column start at 0, so the top-left button is row 0, column 0.
-  - **Only show over ProPresenter**: when ticked (the default), the button only appears when ProPresenter's window is directly under it.
+  - **Only show over ProPresenter**: when ticked, the button only appears when ProPresenter's window is directly under it. It's off the first time you open the app, so you can find the button and set it up, and turns on from the second launch (unless you've changed it yourself).
+  - **Move to Display**: sends the button to another monitor, keeping its relative spot (near the right edge stays near the right edge).
   - **Move to top-left**: brings it back if it ever ends up off-screen.
   - **Quit**
+- **Mac only:** the same "Move to..." choices are in the app's **Dock menu** (right-click its Dock icon) and its **Window** menu in the menu bar. These work even while the button is hidden.
 
-When "Only show over ProPresenter" is on and ProPresenter isn't showing, the button (and its menu) is hidden. Bring ProPresenter to the front to reach it.
+When "Only show over ProPresenter" is on and ProPresenter isn't showing, the button (and its right-click menu) is hidden. Bring ProPresenter to the front to reach it, or on a Mac use the Dock menu to move it to the display ProPresenter is on.
 
 ## Requirements
 
