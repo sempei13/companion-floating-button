@@ -129,12 +129,17 @@ class _CGRect(ctypes.Structure):
 
 
 def target_app_on_top(winlist, x, y, w, h):
-    """True if the front-most normal app window overlapping the rect belongs to TARGET_APP."""
+    """True if the front-most normal app window under the button's centre belongs to TARGET_APP.
+
+    Uses the centre point, not the whole rect: near a screen edge, a window on the next
+    monitor can touch a sliver of the button and would otherwise hide it.
+    """
     me = os.getpid()
+    cx, cy = x + w / 2, y + h / 2
     for owner, pid, layer, wx, wy, ww, wh in winlist.windows():
         if pid == me or layer != 0:      # skip our own windows, menu bar, Dock, overlays
             continue
-        if wx < x + w and x < wx + ww and wy < y + h and y < wy + wh:
+        if wx <= cx < wx + ww and wy <= cy < wy + wh:
             return owner == TARGET_APP
     return False
 
