@@ -40,11 +40,18 @@ Without the setting, the button still presses your Companion button but just say
 - **Click** to press the Companion button.
 - **Drag** to move it. It remembers where you leave it.
 - **Right-click** (or Control-click on a Mac) for the menu:
-  - **Settings...**: choose the Companion computer's address and which button (page, row, column). Row and column start at 0, so the top-left button is row 0, column 0.
+  - **Settings...**: choose the Companion computer's address and which button (page, row, column). Row and column start at 0, so the top-left button is row 0, column 0. Under **Appearance**:
+    - **Button text**: your own words in place of Companion's text (type `\n` for a second line). Leave it blank to show whatever Companion says. The colour still comes from Companion.
+    - **Shape**: Rounded rectangle (set the corner radius; 0 gives square corners), Pill, Oval, or Circle.
+    - **Width / Height**: the size in pixels (width 40-600, height 20-300; a circle uses the width for both). The text grows with the button and shrinks to fit.
+    - Changes preview on the button as you type. **Cancel** puts it back.
+    - **Lock position**: dragging won't move the button, so you can't knock it out of place mid-service. Clicking still presses it, and pulling on it more than a few pixels cancels the click. The "Move to..." menu items still work.
   - **Only show over ProPresenter**: when ticked, the button only appears when ProPresenter's window is directly under it. It's off the first time you open the app, so you can find the button and set it up, and turns on from the second launch (unless you've changed it yourself).
+  - **Only show in Show, Reflow & Bible** (Mac only, on by default): hides the button while ProPresenter is in Edit or More, since there's nothing on screen to clear from there. It reads ProPresenter's toolbar through macOS Accessibility, so the first time, macOS asks you to allow **Companion Floating Button** in **System Settings > Privacy & Security > Accessibility**. Until you allow it, this setting does nothing and the button stays visible.
   - **Move to Display**: sends the button to another monitor, keeping its relative spot (near the right edge stays near the right edge).
   - **Move to top-left**: brings it back if it ever ends up off-screen.
   - **Quit**
+- **It follows ProPresenter.** Put the button on ProPresenter's window and it remembers its spot relative to the nearest corner. When you move or resize ProPresenter, the button moves with it, locked or not. If ProPresenter is minimised or closed, the button stays where it is and catches up when the window comes back. A button placed off ProPresenter just floats where you left it.
 - **Mac only:** the same "Move to..." choices are in the app's **Dock menu** (right-click its Dock icon) and its **Window** menu in the menu bar. These work even while the button is hidden.
 
 When "Only show over ProPresenter" is on and ProPresenter isn't showing, the button (and its right-click menu) is hidden. Bring ProPresenter to the front to reach it, or on a Mac use the Dock menu to move it to the display ProPresenter is on.
