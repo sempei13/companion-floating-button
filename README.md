@@ -4,6 +4,16 @@ A small always-on-top button that sits over ProPresenter and presses a [Bitfocus
 
 Made by Trinity Digital Media, LLC (ChurchTechU). Not affiliated with Bitfocus or Renewed Vision.
 
+![The floating "Clear to Logo" button sitting in ProPresenter's preview panel](docs/screenshots/over-propresenter.png)
+
+<p align="center"><img src="docs/screenshots/button-closeup.png" width="560" alt="Close-up of the button in ProPresenter"></p>
+
+Pick your own text, size and shape. Once it's linked, it takes on the Companion button's colour:
+
+<p align="center"><img src="docs/screenshots/shapes.png" width="624" alt="Pill, rounded, oval, circle and square buttons in different colours"></p>
+
+<p align="center"><img src="docs/screenshots/settings.png" width="420" alt="The Settings window"></p>
+
 ## Download
 
 Get the latest version from the Releases page:
